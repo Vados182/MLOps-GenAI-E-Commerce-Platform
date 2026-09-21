@@ -3,11 +3,12 @@ import pandas as pd
 import xgboost as xgb
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
+from openai import OpenAI
 
 app = FastAPI(
-    title="E-Commerce Churn Prediction API",
-    description="REST API do predykcji ryzyka churnu klientów platformy Olist.",
-    version="1.0.0"
+    title="MLOps & GenAI E-Commerce Platform",
+    description="REST API do predykcji ryzyka churnu oraz generowania spersonalizowanych akcji retencyjnych GenAI.",
+    version="1.1.0"
 )
 
 MODEL_PATH = "best_xgboost_model.json"
@@ -16,11 +17,12 @@ model = xgb.XGBClassifier()
 if os.path.exists(MODEL_PATH):
     model.load_model(MODEL_PATH)
     print(f"✓ Pomyślnie załadowano model z pliku: {MODEL_PATH}")
-else:
-    print(f"⚠️ Ostrzeżenie: Plik {MODEL_PATH} nie istnieje lokalnie!")
+
+# Inicjalizacja klienta LLM (pobiera OPENAI_API_KEY lub GROQ_API_KEY ze środowiska)
+api_key = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=api_key) if api_key else None
 
 
-# Schemat dopasowany dokładnie do 9 cech modelu
 class CustomerFeatures(BaseModel):
     actual_delivery_days: float = Field(..., description="Rzeczywisty czas dostawy w dniach", json_schema_extra={"example": 12.0})
     delivery_diff_days: float = Field(..., description="Różnica między szacowanym a faktycznym czasem dostawy", json_schema_extra={"example": -2.5})
@@ -33,23 +35,45 @@ class CustomerFeatures(BaseModel):
     avg_description_length: float = Field(..., description="Średnia długość opisu produktu", json_schema_extra={"example": 500.0})
 
 
-class PredictionOutput(BaseModel):
+class RetentionOutput(BaseModel):
     churn_probability: float
     is_high_risk: bool
+    retention_strategy: str
     status: str
 
 
-@app.get("/")
-def health_check():
-    return {
-        "status": "healthy",
-        "service": "Olist Churn Prediction API",
-        "model_loaded": os.path.exists(MODEL_PATH)
-    }
+def generate_genai_retention_offer(features: CustomerFeatures, probability: float) -> str:
+    """Generuje spersonalizowaną ofertę retencyjną używając LLM."""
+    if not client:
+        return "Brak skonfigurowanego klucza API dla modelu GenAI. Skonfiguruj OPENAI_API_KEY w środowisku."
+
+    prompt = f"""
+    Jesteś ekspertem ds. retencji klientów w sklepie e-commerce Olist.
+    Model ML wykrył wysokie ryzyko odejścia klienta (Prawdopodobieństwo churnu: {probability:.2%}).
+
+    Kontekst klienta:
+    - Ostatni czas dostawy: {features.actual_delivery_days} dni (opóźnienie: {features.is_delayed})
+    - Różnica względem szacowanego czasu: {features.delivery_diff_days} dni
+    - Liczba produktów w zamówieniu: {features.items_count}
+    - Wartość zamówienia: {features.total_order_value} BRL (koszt dostawy: {features.total_freight_value} BRL)
+
+    Napisz krótką (max 2-3 zdania), spersonalizowaną i empatyczną wiadomość do klienta z propozycją dedykowanej rekompensaty lub zniżki, aby zachęcić go do ponownych zakupów.
+    """
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            max_tokens=150
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"Nie udało się wygenerować oferty GenAI: {str(e)}"
 
 
-@app.post("/predict", response_model=PredictionOutput)
-def predict_churn(features: CustomerFeatures):
+@app.post("/predict-with-retention", response_model=RetentionOutput)
+def predict_churn_and_retain(features: CustomerFeatures):
     if not os.path.exists(MODEL_PATH):
         raise HTTPException(status_code=500, detail="Model nie został załadowany.")
 
@@ -72,9 +96,14 @@ def predict_churn(features: CustomerFeatures):
         probability = float(model.predict_proba(input_df)[:, 1][0])
         is_high_risk = probability >= 0.5
 
-        return PredictionOutput(
+        retention_offer = "Klient w grupie niskiego ryzyka – brak konieczności akcji retencyjnej."
+        if is_high_risk:
+            retention_offer = generate_genai_retention_offer(features, probability)
+
+        return RetentionOutput(
             churn_probability=round(probability, 4),
             is_high_risk=is_high_risk,
+            retention_strategy=retention_offer,
             status="success"
         )
     except Exception as e:
