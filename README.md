@@ -1,5 +1,7 @@
 # 🛒 MLOps-GenAI-E-Commerce-Platform
 
+![CI/CD Pipeline](https://github.com/Vados182/MLOps-GenAI-E-Commerce-Platform/actions/workflows/cicd.yml/badge.svg)
+
 End-to-end MLOps pipeline to predict customer churn risk for the Olist E-Commerce platform using XGBoost, Azure ML, FastAPI, Docker, and Render.
 
 ## 🚀 Live Demo & API Documentation
