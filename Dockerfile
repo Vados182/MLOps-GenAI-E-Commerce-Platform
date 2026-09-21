@@ -14,12 +14,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 5. Kopiowanie kodu aplikacji FastAPI oraz zapisanego modelu
+# 5. Kopiowanie kodu aplikatywnego oraz pliku modelu
 COPY 03_app_fastapi.py .
 COPY best_xgboost_model.json .
 
-# 6. Udostępnienie portu 8000
-EXPOSE 8000
-
-# 7. Uruchomienie aplikacji za pomocą serwera Uvicorn
-CMD ["uvicorn", "03_app_fastapi:app", "--host", "0.0.0.0", "--port", "8000"]
+# 6. Start usługi - obsługa zmiennej $PORT od Rendera (domyślnie 8000)
+ENV PORT=8000
+CMD uvicorn 03_app_fastapi:app --host 0.0.0.0 --port $PORT
